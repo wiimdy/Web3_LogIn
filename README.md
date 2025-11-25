@@ -24,6 +24,7 @@ base sepolia
 - Node.js 18.0 이상
 - npm 또는 yarn
 - MetaMask 브라우저 확장 프로그램
+- Base Sepolia 네트워크 (지갑에 추가)
 
 ## 🚀 시작하기
 
@@ -37,19 +38,24 @@ npm install --legacy-peer-deps
 
 ### 2. 환경 변수 설정
 
-`.env` 파일이 이미 생성되어 있습니다:
+루트에 있는 `.env` 파일을 열고 값을 채워주세요. 노출하면 안 되는 키이므로 로컬에만 보관하세요.
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="file:./dev.db"              # SQLite 파일 경로
+RPC_URL="https://sepolia.base.org"        # Base Sepolia RPC 엔드포인트
+NFT_CONTRACT_ADDRESS="0x..."              # 배포한 NFT 컨트랙트 주소
+NFT_MINTER_PRIVATE_KEY="0x..."            # 민팅 지갑의 개인키 (절대 커밋 금지)
 ```
+
+기본 값 그대로 사용해도 로컬 개발은 가능합니다. 계약 주소·키는 실제 민팅을 테스트할 때 본인 값으로 교체하세요.
 
 ### 3. 데이터베이스 초기화
 
-```bash
-# Prisma 마이그레이션 실행
-npx prisma migrate dev
+SQLite 파일을 새로 만들고 마이그레이션을 적용합니다. 기존 데이터가 있다면 백업 후 진행하세요.
 
-# Prisma Client 생성
+```bash
+rm -f prisma/dev.db
+npx prisma migrate dev
 npx prisma generate
 ```
 
@@ -74,6 +80,13 @@ npm run dev
 ```
 
 브라우저에서 [http://localhost:3000](http://localhost:3000)을 열어 애플리케이션을 확인하세요.
+
+### 6. 프로덕션 빌드 (옵션)
+
+```bash
+npm run build
+npm run start
+```
 
 ## 📱 페이지 구조
 
@@ -157,6 +170,32 @@ npm run dev
 1. **세션 생성**: 새로운 출석 세션 생성 및 QR 코드 다운로드
 2. **세션 관리**: 진행 중인 세션 확인 및 종료
 3. **통계 확인**: 전체 출석 통계 및 회차별 출석률 확인
+
+## 🙋‍♀️ 사용자가 할 수 있는 기능
+
+- 지갑 연결(MetaMask) 및 권한 확인
+- QR 코드 스캔 후 세션 출석 체크 (중복 방지)
+- 출석 시 NFT 자동 민팅 및 트랜잭션 확인
+- `/my-attendance`에서 개인 출석 기록과 발급된 NFT 목록 확인
+
+### 사용 흐름
+1) 브라우저에서 메인 페이지 접속 후 MetaMask로 지갑 연결  
+2) 강의실 화면/자료에 표시된 QR 코드를 스캔하면 해당 세션의 `/attendance/[sessionId]`로 이동  
+3) 출석 버튼을 누르면 출석이 기록되고 NFT 민팅 트랜잭션이 발생  
+4) 완료 후 발급된 NFT 정보와 출석 기록을 확인 (`/my-attendance`)
+
+## 🛡️ 관리자가 할 수 있는 기능
+
+- 새로운 출석 세션 생성 (회차 번호, 일정, 시작/종료 시간, 최대 인원 설정)
+- 세션별 QR 코드 생성/배포
+- 실시간 출석 현황 조회 및 세션 종료 처리
+- 출석 기록, 통계 확인 및 관리자 계정 추가
+
+### 관리자 사용 흐름
+1) 관리자로 등록된 지갑으로 로그인 (`/admin`)  
+2) 새 세션 생성 → QR 코드 다운로드/배포  
+3) 진행 중인 세션의 실시간 출석 현황 모니터링  
+4) 필요 시 세션 종료 및 추후 통계·기록 확인
 
 ## 📦 프로젝트 구조
 
