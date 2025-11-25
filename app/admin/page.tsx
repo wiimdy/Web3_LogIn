@@ -13,6 +13,7 @@ interface Session {
   endTime: Date;
   isActive: boolean;
   qrCode: string;
+  accessCode?: string;
   attendeeCount?: number;
 }
 
@@ -28,6 +29,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'create' | 'manage' | 'stats'>('create');
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+  const [qrSessionNumber, setQrSessionNumber] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isCheckingAdmin, setIsCheckingAdmin] = useState(true);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -40,7 +42,28 @@ export default function AdminPage() {
     startTime: '',
     endTime: '',
     duration: 30,
+    capacity: '',
+    accessCode: '',
   });
+
+  // 초기 날짜/시간을 현재 시각으로 세팅
+  useEffect(() => {
+    const now = new Date();
+    // 로컬 기준 YYYY-MM-DD (UTC가 아니라 현재 시간대 사용)
+    const date = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }).format(now);
+    const time = now.toTimeString().slice(0, 5);
+
+    setSessionForm((prev) => ({
+      ...prev,
+      date: prev.date || date,
+      startTime: prev.startTime || time,
+    }));
+  }, []);
 
   // 관리자 권한 확인
   useEffect(() => {
@@ -90,6 +113,31 @@ export default function AdminPage() {
     }
   };
 
+  const fetchNextSessionNumber = async () => {
+    try {
+      const response = await fetch('/api/sessions');
+      const data: Session[] = await response.json();
+      const maxSessionNumber = data.reduce(
+        (max, session) => Math.max(max, session.sessionNumber),
+        0
+      );
+      const nextNumber = maxSessionNumber + 1;
+
+      setSessionForm((prev) => ({
+        ...prev,
+        sessionNumber: prev.sessionNumber || nextNumber.toString(),
+      }));
+    } catch (error) {
+      console.error('Failed to fetch next session number:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'create') {
+      fetchNextSessionNumber();
+    }
+  }, [isAdmin, activeTab]);
+
   const fetchStats = async () => {
     try {
       const response = await fetch('/api/stats');
@@ -105,13 +153,30 @@ export default function AdminPage() {
     setIsCreatingSession(true);
 
     try {
+      const sessionNumberInt = parseInt(sessionForm.sessionNumber, 10);
+      if (Number.isNaN(sessionNumberInt)) {
+        throw new Error('회차 번호를 확인해주세요.');
+      }
+
+      const generateAccessCode = () => {
+        if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+          const parts = Array.from(crypto.getRandomValues(new Uint32Array(2))).map((v) =>
+            v.toString(36)
+          );
+          return `${Date.now().toString(36)}-${parts.join('')}`;
+        }
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      };
+
+      const accessCode = sessionForm.accessCode || generateAccessCode();
+
       // 종료 시간 계산
       const [hours, minutes] = sessionForm.startTime.split(':').map(Number);
       const startDate = new Date(`${sessionForm.date}T${sessionForm.startTime}:00`);
       const endDate = new Date(startDate.getTime() + sessionForm.duration * 60000);
 
       // QR 코드 생성
-      const sessionUrl = `${window.location.origin}/attendance/${sessionForm.sessionNumber}`;
+      const sessionUrl = `${window.location.origin}/attendance/${accessCode}`;
       const qrDataUrl = await QRCode.toDataURL(sessionUrl, {
         width: 400,
         margin: 2,
@@ -128,20 +193,31 @@ export default function AdminPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sessionNumber: parseInt(sessionForm.sessionNumber),
+          sessionNumber: sessionNumberInt,
           date: sessionForm.date,
           startTime: startDate.toISOString(),
           endTime: endDate.toISOString(),
           qrCode: qrDataUrl,
+          capacity: sessionForm.capacity ? parseInt(sessionForm.capacity, 10) : undefined,
+          accessCode,
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create session');
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.error || '세션 생성에 실패했습니다.');
       }
 
       setQrCodeUrl(qrDataUrl);
+      setQrSessionNumber(sessionForm.sessionNumber);
       alert('세션이 생성되었습니다! QR 코드를 다운로드하거나 공유하세요.');
+
+      // 다음 회차 번호를 자동으로 제안
+      setSessionForm((prev) => ({
+        ...prev,
+        sessionNumber: (sessionNumberInt + 1).toString(),
+        accessCode: '',
+      }));
       
       // 세션 목록 새로고침
       if (activeTab === 'manage') {
@@ -156,9 +232,9 @@ export default function AdminPage() {
   };
 
   const downloadQRCode = () => {
-    if (!qrCodeUrl) return;
+    if (!qrCodeUrl || !qrSessionNumber) return;
     const link = document.createElement('a');
-    link.download = `attendance-session-${sessionForm.sessionNumber}.png`;
+    link.download = `attendance-session-${qrSessionNumber}.png`;
     link.href = qrCodeUrl;
     link.click();
   };
@@ -184,6 +260,45 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Failed to end session:', error);
       alert('세션 종료에 실패했습니다.');
+    }
+  };
+
+  const handleManualAttendance = async (sessionId: number) => {
+    if (!account) {
+      alert('관리자 지갑이 연결되어야 합니다.');
+      return;
+    }
+
+    const wallet = prompt('출석 처리할 지갑 주소를 입력하세요 (0x...)');
+    if (!wallet) return;
+
+    try {
+      const response = await fetch('/api/attendances', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: wallet,
+          sessionId,
+          adminWallet: account,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.error || '출석 처리에 실패했습니다.');
+      }
+
+      alert('출석을 등록했습니다.');
+      fetchSessions();
+    } catch (error) {
+      console.error('Failed to add attendance:', error);
+      if (error instanceof Error) {
+        alert(error.message);
+      } else {
+        alert('출석 처리에 실패했습니다.');
+      }
     }
   };
 
@@ -347,6 +462,25 @@ export default function AdminPage() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    최대 인원 (선택)
+                  </label>
+                  <input
+                    type="number"
+                    value={sessionForm.capacity}
+                    placeholder="기본 50명"
+                    min={1}
+                    onChange={(e) =>
+                      setSessionForm({
+                        ...sessionForm,
+                        capacity: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  />
+                </div>
+
                 <button
                   type="submit"
                   disabled={isCreatingSession}
@@ -378,7 +512,10 @@ export default function AdminPage() {
                     QR 코드 다운로드
                   </button>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-4">
-                    제 {sessionForm.sessionNumber}회차 출석 QR 코드
+                    제 {qrSessionNumber ?? sessionForm.sessionNumber}회차 출석 QR 코드
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    링크: /attendance/**** (난수 코드 기반)
                   </p>
                 </div>
               ) : (
@@ -420,6 +557,9 @@ export default function AdminPage() {
                         출석 인원
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        정원
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                         작업
                       </th>
                     </tr>
@@ -457,9 +597,12 @@ export default function AdminPage() {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                             {session.attendeeCount || 0}명
                           </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                            {session.capacity ?? 50}명
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm">
                             <button 
-                              onClick={() => window.open(`/session/${session.id}/status`, '_blank')}
+                              onClick={() => window.open(`/session/${session.sessionNumber}/status`, '_blank')}
                               className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mr-3"
                             >
                               상세
@@ -472,6 +615,12 @@ export default function AdminPage() {
                                 종료
                               </button>
                             )}
+                            <button
+                              onClick={() => handleManualAttendance(session.id)}
+                              className="ml-3 text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300"
+                            >
+                              출석 추가
+                            </button>
                           </td>
                         </tr>
                       );

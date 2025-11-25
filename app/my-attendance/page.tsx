@@ -8,7 +8,9 @@ interface AttendanceRecord {
   id: number;
   walletAddress: string;
   sessionId: number;
-  tokenId: number;
+  tokenId: string | null;
+  txHash?: string | null;
+  chainId?: string | null;
   timestamp: Date;
   session: {
     sessionNumber: number;
@@ -173,7 +175,7 @@ export default function MyAttendancePage() {
                           토큰 ID
                         </span>
                         <span className="font-mono text-gray-900 dark:text-white">
-                          #{record.tokenId}
+                          #{record.tokenId ?? '—'}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -194,9 +196,20 @@ export default function MyAttendancePage() {
                       </div>
                     </div>
 
-                    <button className="w-full mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-colors text-sm">
-                      OpenSea에서 보기
-                    </button>
+                    {record.txHash ? (
+                      <a
+                        href={`https://sepolia.basescan.org/tx/${record.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-center w-full mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-colors text-sm"
+                      >
+                        BaseScan에서 보기
+                      </a>
+                    ) : (
+                      <div className="w-full mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-400 rounded-lg text-sm text-center">
+                        트랜잭션 정보 없음
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

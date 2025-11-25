@@ -109,7 +109,6 @@ export default function AttendancePage() {
         body: JSON.stringify({
           walletAddress: account,
           sessionId: sessionData.id,
-          tokenId: Date.now(), // 임시 토큰 ID (실제로는 컨트랙트에서 발급)
         }),
       });
 

@@ -19,6 +19,8 @@ model Session {
   endTime       DateTime // 종료 시간
   isActive      Boolean  @default(true) // 진행 중 여부
   qrCode        String?  // QR 코드 데이터
+  capacity      Int      @default(50) // 최대 인원
+  accessCode    String   @unique @default(uuid()) // QR 전용 난수 코드
   createdAt     DateTime @default(now())
   
   attendances   Attendance[]
@@ -29,12 +31,26 @@ model Attendance {
   id           Int      @id @default(autoincrement())
   walletAddress String  // 지갑 주소
   sessionId    Int      // 세션 ID
-  tokenId      String?  // NFT 토큰 ID (발급 후)
+  tokenId      String?  // NFT 토큰 ID (온체인)
+  tokenUri     String?  // 메타데이터 URI
+  txHash       String?  // 민팅 트랜잭션 해시
+  contractAddress String? // NFT 컨트랙트 주소
+  chainId      String?  // 네트워크 식별자
   timestamp    DateTime @default(now())
   
   session      Session  @relation(fields: [sessionId], references: [id])
   
   @@unique([walletAddress, sessionId]) // 세션당 1회만 출석 가능
+}
+
+// 학생 정보
+model Student {
+  id            Int      @id @default(autoincrement())
+  name          String
+  studentId     String?
+  walletAddress String   @unique
+  email         String?
+  createdAt     DateTime @default(now())
 }
 
 // 관리자 주소

@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useWeb3 } from '@/contexts/Web3Context';
 
 interface SessionData {
   id: number;
@@ -12,13 +13,46 @@ interface SessionData {
   endTime: Date;
   isActive: boolean;
   attendeeCount: number;
+  capacity?: number | null;
+  accessCode?: string;
+  attendances: {
+    walletAddress: string;
+    tokenId: string | null;
+    timestamp: string;
+  }[];
 }
 
 export default function SessionStatusPage() {
   const { sessionId } = useParams();
+  const { account, isConnected, isConnecting, connectWallet } = useWeb3();
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isCheckingAdmin, setIsCheckingAdmin] = useState(true);
+
+  useEffect(() => {
+    const checkAdmin = async () => {
+      if (!account) {
+        setIsAdmin(false);
+        setIsCheckingAdmin(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/admin?walletAddress=${account}`);
+        const data = await response.json();
+        setIsAdmin(data.isAdmin);
+      } catch (error) {
+        console.error('Failed to check admin status:', error);
+        setIsAdmin(false);
+      } finally {
+        setIsCheckingAdmin(false);
+      }
+    };
+
+    checkAdmin();
+  }, [account]);
 
   useEffect(() => {
     const fetchSessionData = async () => {
@@ -37,15 +71,21 @@ export default function SessionStatusPage() {
       }
     };
 
-    fetchSessionData();
+    if (isAdmin) {
+      fetchSessionData();
+    }
 
     // 5초마다 출석 인원 업데이트
-    const interval = setInterval(() => {
-      fetchSessionData();
-    }, 5000);
+    const interval = isAdmin
+      ? setInterval(() => {
+          fetchSessionData();
+        }, 5000)
+      : null;
 
-    return () => clearInterval(interval);
-  }, [sessionId]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [sessionId, isAdmin]);
 
   useEffect(() => {
     if (!sessionData) return;
@@ -69,6 +109,64 @@ export default function SessionStatusPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 text-center">
+          <div className="text-6xl mb-4">🔒</div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+            관리자 인증 필요
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            세션 현황은 관리자만 볼 수 있습니다. 지갑을 연결해주세요.
+          </p>
+          <button
+            onClick={connectWallet}
+            disabled={isConnecting}
+            className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-70"
+          >
+            {isConnecting ? '연결 중...' : '지갑 연결하기'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isCheckingAdmin) {
+    return (
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center px-4">
+        <div className="text-center">
+          <div className="text-4xl mb-4">⏳</div>
+          <p className="text-gray-600 dark:text-gray-400">관리자 확인 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 text-center">
+          <div className="text-6xl mb-4">⛔</div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+            접근 권한 없음
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            관리자만 세션 현황을 볼 수 있습니다.
+            <br />
+            현재 지갑: {account?.slice(0, 6)}...{account?.slice(-4)}
+          </p>
+          <Link
+            href="/"
+            className="block w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            홈으로 돌아가기
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading || !sessionData) {
     return (
       <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center px-4">
@@ -80,7 +178,7 @@ export default function SessionStatusPage() {
     );
   }
 
-  const totalStudents = 50; // 임시 값
+  const totalStudents = sessionData.capacity ?? 50;
   const attendanceRate = Math.round((sessionData.attendeeCount / totalStudents) * 100);
 
   return (
@@ -125,14 +223,27 @@ export default function SessionStatusPage() {
             </div>
           </div>
 
-          {/* 출석 현황 */}
+          {/* 출석 현황 + 내보내기 */}
           <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                실시간 출석 현황
-              </h3>
-              <div className="text-3xl font-bold text-gray-900 dark:text-white">
-                {sessionData.attendeeCount} / {totalStudents}
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  실시간 출석 현황
+                </h3>
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  {sessionData.attendeeCount} / {totalStudents}명
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {attendanceRate}%
+                </div>
+                <a
+                  href={`/api/sessions/${sessionData.id}/export?adminWallet=${account}`}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                >
+                  결과 CSV 다운로드
+                </a>
               </div>
             </div>
 
@@ -191,6 +302,49 @@ export default function SessionStatusPage() {
           </div>
         </div>
 
+        {/* 출석자 리스트 */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6">
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+            출석자 리스트
+          </h3>
+          {sessionData.attendances.length === 0 ? (
+            <p className="text-gray-600 dark:text-gray-400">아직 출석한 사용자가 없습니다.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-gray-700">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      지갑 주소
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      토큰 ID
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      출석 시간
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {sessionData.attendances.map((att) => (
+                    <tr key={`${att.walletAddress}-${att.tokenId ?? att.timestamp}`}>
+                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-mono">
+                        {att.walletAddress.slice(0, 6)}...{att.walletAddress.slice(-4)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-mono">
+                        {att.tokenId ? `#${att.tokenId}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        {new Date(att.timestamp).toLocaleString('ko-KR')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* 안내 메시지 */}
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6 mb-6">
           <h4 className="font-semibold text-blue-900 dark:text-blue-200 mb-2">
@@ -205,12 +359,6 @@ export default function SessionStatusPage() {
 
         {/* 액션 버튼 */}
         <div className="grid md:grid-cols-2 gap-4">
-          <Link
-            href="/my-attendance"
-            className="block text-center px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-          >
-            내 출석 기록 보기
-          </Link>
           <Link
             href="/"
             className="block text-center px-6 py-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-colors"

@@ -8,8 +8,16 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const session = await prisma.session.findUnique({
-      where: { id: parseInt(id) },
+    const numericId = parseInt(id, 10);
+
+    // accessCode 또는 숫자(id/sessionNumber) 모두 허용
+    let session = await prisma.session.findFirst({
+      where: {
+        OR: [
+          ...(Number.isNaN(numericId) ? [] : [{ id: numericId }, { sessionNumber: numericId }]),
+          { accessCode: id },
+        ],
+      },
       include: {
         attendances: true,
       },
@@ -17,6 +25,15 @@ export async function GET(
 
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
+    // 종료 시간이 지난 세션은 즉시 비활성화
+    if (session.isActive && new Date(session.endTime) < new Date()) {
+      session = await prisma.session.update({
+        where: { id: session.id },
+        data: { isActive: false },
+        include: { attendances: true },
+      });
     }
 
     return NextResponse.json({
@@ -36,10 +53,26 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const numericId = parseInt(id, 10);
+
+    // id, sessionNumber, accessCode 모두 허용
+    const targetSession = await prisma.session.findFirst({
+      where: {
+        OR: [
+          ...(Number.isNaN(numericId) ? [] : [{ id: numericId }, { sessionNumber: numericId }]),
+          { accessCode: id },
+        ],
+      },
+    });
+
+    if (!targetSession) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
     const body = await request.json();
 
     const session = await prisma.session.update({
-      where: { id: parseInt(id) },
+      where: { id: targetSession.id },
       data: body,
     });
 
@@ -57,8 +90,24 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const numericId = parseInt(id, 10);
+
+    // id, sessionNumber, accessCode 모두 허용
+    const targetSession = await prisma.session.findFirst({
+      where: {
+        OR: [
+          ...(Number.isNaN(numericId) ? [] : [{ id: numericId }, { sessionNumber: numericId }]),
+          { accessCode: id },
+        ],
+      },
+    });
+
+    if (!targetSession) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
     await prisma.session.delete({
-      where: { id: parseInt(id) },
+      where: { id: targetSession.id },
     });
 
     return NextResponse.json({ message: 'Session deleted successfully' });
